@@ -9,9 +9,9 @@ on:
       - main
 
 jobs:
-  build:
+  # Job pour exécuter les tests unitaires
+  test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -19,7 +19,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
@@ -29,17 +29,50 @@ jobs:
       - name: Run tests
         run: |
           pytest
+        continue-on-error: false # Si un test échoue, ce job échoue.
 
-      - name: Build Docker image
-        run: |
-          docker build -t flask-app .
+      - name: Notify on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI Pipeline Failure"
+          body: "One or more tests failed. Please check the pipeline for details."
+          to: your_email@example.com
+          from: your_email@example.com
 
-      - name: Push Docker image to Docker Hub
-        if: success() # Cette étape ne se lance que si les tests réussissent
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  # Job pour construire et pousser l'image Docker
+  docker:
+    needs: test # Ce job dépend du succès du job de tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and tag Docker image
         run: |
-          echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-          docker tag flask-app $DOCKER_USERNAME/flask-app:latest
-          docker push $DOCKER_USERNAME/flask-app:latest
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/flaskapp:latest .
+          docker tag ${{ secrets.DOCKER_USERNAME }}/flaskapp:latest registry.example.com/flaskapp:latest
+
+      - name: Push image to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/flaskapp:latest
+
+      - name: Log in to Private Docker Registry
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.PRIVATE_REGISTRY_USERNAME }}
+          password: ${{ secrets.PRIVATE_REGISTRY_PASSWORD }}
+
+      - name: Push image to Private Docker Registry
+        run: |
+          docker push registry.example.com/flaskapp:latest
